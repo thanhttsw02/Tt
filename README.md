@@ -1,206 +1,59 @@
 # Tt
 
-Ok mình hướng dẫn code REST API & Flow Power Automate để bắt user mới được share vào site với quyền Contribute.
+Đúng rồi 👍
+👉 Không bắt buộc phải dùng Parse JSON nếu bạn thao tác trực tiếp trên response bằng expressions.
+
+Parse JSON chỉ giúp dễ nhìn hơn và có intellisense, còn về logic flow thì không cần.
 
 ⸻
 
-🧠 Ý tưởng chính:
-	•	Lấy danh sách RoleAssignments
-	•	Lọc quyền Contribute
-	•	So sánh với danh sách đã lưu
-	•	User nào mới xuất hiện → vừa được share quyền
+✔️ TRẢ LỜI NGẮN GỌN
+
+❓ “K có parse json đúng k?”
+➡️ Đúng – bạn không cần Parse JSON.
+Bạn hoàn toàn có thể:
+	•	GET RoleAssignments → dùng body() để đọc
+	•	EnsureUser → dùng body() để lấy d.Id
+	•	Remove → không cần parse gì
 
 ⸻
 
-🧩 BƯỚC 1 — HTTP GET trong Power Automate
+✔️ FLOW RÚT GỌN (KHÔNG PARSE JSON)
 
-🔹 Action: Send an HTTP request to SharePoint
+1) GET RoleAssignments
 
-Method:
+_api/web/RoleAssignments?$expand=Member,RoleDefinitionBindings&$select=Member/LoginName
 
-GET
+2) Apply to each → lặp
 
-URI:
+Value:
 
-_api/web/RoleAssignments?$expand=Member,RoleDefinitionBindings
+body('HTTP_Get_RoleAssignments')?['d']?['results']
 
-Headers:
+3) Lấy LoginName (Compose)
 
-Accept: application/json;odata=verbose
+items('Apply_to_each')?['Member']?['LoginName']
 
-📌 Kết quả trả về dạng JSON
+4) EnsureUser → lấy principalId
 
-⸻
+_api/web/EnsureUser()?loginName='@{outputs('Compose_LoginName')}'
 
-🧩 BƯỚC 2 — Parse JSON
+5) Lấy PrincipalId (KHÔNG Parse JSON)
 
-Body mẫu (sample):
+body('EnsureUser')?['d']?['Id']
 
-{
-   "d":{
-      "results":[
-         {
-            "Member":{
-               "Title":"user@domain.com"
-            },
-            "RoleDefinitionBindings":{
-               "results":[
-                  {
-                     "Name":"Contribute"
-                  }
-               ]
-            }
-         }
-      ]
-   }
-}
+6) Remove bằng PrincipalId (KHÔNG Parse JSON)
 
-Schema (dùng trong Parse JSON):
-
-{
-  "type": "object",
-  "properties": {
-    "d": {
-      "type": "object",
-      "properties": {
-        "results": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "Member": {
-                "type": "object",
-                "properties": {
-                  "Title": { "type": "string" }
-                }
-              },
-              "RoleDefinitionBindings": {
-                "type": "object",
-                "properties": {
-                  "results": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "Name": { "type": "string" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+_api/web/RoleAssignments/RemoveByPrincipalId(@{body('EnsureUser')?['d']?['Id']})
 
 
 ⸻
 
-🧩 BƯỚC 3 — Filter chỉ lấy role Contribute
-
-Trong Apply to each lặp d.results
-
-Điều kiện:
-
-contains(item()?['RoleDefinitionBindings']?['results']?[0]?['Name'], 'Contribute')
-
+✔️ KẾT LUẬN
+	•	Không cần Parse JSON
+	•	Flow chạy nhẹ hơn
+	•	Không bị lỗi schema
 
 ⸻
 
-🧩 BƯỚC 4 — Check user đã tồn tại trong List chưa
-
-Action: Get items (SharePoint list “UserPermissionsLog”)
-
-Filter Query:
-
-UserEmail eq '@{item()?['Member']?['Title']}'
-
-
-⸻
-
-🧩 BƯỚC 5 — Condition để bắt user mới
-
-Condition:
-
-length(body('Get_items')?['value']) is equal to 0
-
-👉 Nếu đúng → user mới đc share
-
-⸻
-
-🧩 BƯỚC 6 — Ghi log vào List
-
-Các trường:
-
-Field	Value
-UserEmail	@{item()?['Member']?['Title']}
-Role	Contribute
-TimeDetected	utcNow()
-
-
-⸻
-
-🧩 BƯỚC 7 — Gửi cảnh báo (Teams/Email)
-
-Message:
-
-⚠️ PHÁT HIỆN USER MỚI ĐƯỢC SHARE QUYỀN
-Email: @{item()?['Member']?['Title']}
-Role: Contribute
-Time: @{utcNow()}
-
-
-⸻
-
-✔ MẪU FLOW HOÀN CHỈNH (Pseudo code)
-
-Recurrence (5 phút)
-   |
-   V
-HTTP GET: _api/web/RoleAssignments?$expand=Member,RoleDefinitionBindings
-   |
-   V
-Parse JSON
-   |
-   V
-Apply to each (d.results[])
-    |
-    +-- Condition: Name = Contribute ?
-    |
-    +-- If Yes:
-            |
-            V
-         Get items from List where UserEmail = this user
-            |
-            V
-          Condition length == 0 ?
-               |
-               +-- Yes: (User mới)
-                        - Add item to list
-                        - Send notification
-               |
-               +-- No: (User cũ) do nothing
-
-
-⸻
-
-🧪 TEST KẾT QUẢ
-
-Test thực tế:
-	•	Owner share site → Add member Contribute
-	•	Flow chạy sau 5 phút
-	•	Flow detect user mới
-	•	→ Gửi cảnh báo
-
-⸻
-
-📌 Bạn cần mình tạo Flow file (.zip) cho bạn import?
-
-👉 Chỉ cần gửi:
-	•	Site URL
-	•	Tên list log (nếu bạn chưa có mình sẽ tạo luôn)
-
-Mình sẵn sàng làm mẫu chi tiết cho bạn 💪
+Nếu bạn muốn, mình vẽ luôn flow / screenshot từng bước, hoặc bạn đưa mình tên các HTTP action, mình viết lại expression đúng 100% theo tên của bạn để bạn copy chạy là được.
